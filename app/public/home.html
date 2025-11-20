@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureBank - Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .user-info {
+            text-align: right;
+        }
+
+        .user-info .name {
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        .user-info .id {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        .logout-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+
+        .logout-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px 20px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            background: white;
+            padding: 10px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .tab {
+            flex: 1;
+            padding: 15px 20px;
+            background: transparent;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            color: #666;
+            transition: all 0.3s;
+        }
+
+        .tab.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .tab:hover:not(.active) {
+            background: #f5f7fa;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
+        .info-item {
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .info-item label {
+            display: block;
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .info-item value {
+            display: block;
+            font-size: 18px;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .account-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+        }
+
+        .account-card .balance {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-bottom: 10px;
+        }
+
+        .account-card .amount {
+            font-size: 48px;
+            font-weight: 700;
+            margin-bottom: 20px;
+        }
+
+        .account-card .details {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .action-btn {
+            padding: 20px;
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+
+        .action-btn:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        }
+
+        .action-btn .icon {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .action-btn .title {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .transaction-list {
+            margin-top: 20px;
+        }
+
+        .transaction-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .transaction-item:last-child {
+            border-bottom: none;
+        }
+
+        .transaction-info .name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 4px;
+        }
+
+        .transaction-info .date {
+            font-size: 13px;
+            color: #999;
+        }
+
+        .transaction-amount {
+            font-weight: 700;
+            font-size: 18px;
+        }
+
+        .transaction-amount.credit {
+            color: #28a745;
+        }
+
+        .transaction-amount.debit {
+            color: #dc3545;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .submit-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 14px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .submit-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .security-status {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            background: #e8f5e9;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .security-status .icon {
+            font-size: 24px;
+        }
+
+        .security-status .text {
+            flex: 1;
+        }
+
+        .security-status .text .title {
+            font-weight: 600;
+            color: #2e7d32;
+            margin-bottom: 4px;
+        }
+
+        .security-status .text .description {
+            font-size: 13px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🏦 SecureBank Dashboard</h1>
+        <div class="header-right">
+            <div class="user-info">
+                <div class="name" id="userName">Loading...</div>
+                <div class="id" id="customerId">Customer ID: ...</div>
+            </div>
+            <button class="logout-btn" onclick="logout()">Logout</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('personal')">📊 Personal Data</button>
+            <button class="tab" onclick="switchTab('netbanking')">💳 Net Banking</button>
+            <button class="tab" onclick="switchTab('loans')">🏠 Loan Application</button>
+        </div>
+
+        <!-- Personal Data Tab -->
+        <div id="personal" class="tab-content active">
+            <div class="account-card">
+                <div class="balance">Available Balance</div>
+                <div class="amount" id="accountBalance">$0.00</div>
+                <div class="details">
+                    <div>
+                        <div style="font-size: 12px; opacity: 0.8;">Account Type</div>
+                        <div id="accountType" style="font-weight: 600;">...</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 12px; opacity: 0.8;">Last Login</div>
+                        <div id="lastLogin" style="font-weight: 600;">...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>👤 Personal Information</h2>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <label>Customer ID</label>
+                        <value id="info-customer-id">...</value>
+                    </div>
+                    <div class="info-item">
+                        <label>Full Name</label>
+                        <value id="info-name">...</value>
+                    </div>
+                    <div class="info-item">
+                        <label>Account Type</label>
+                        <value id="info-account-type">...</value>
+                    </div>
+                    <div class="info-item">
+                        <label>Account Status</label>
+                        <value>✓ Active</value>
+                    </div>
+                </div>
+
+                <div class="security-status">
+                    <div class="icon">🔒</div>
+                    <div class="text">
+                        <div class="title">Secure Connection Active</div>
+                        <div class="description">Your data is protected by Azure Key Vault and monitored 24/7 by our SIEM system</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Net Banking Tab -->
+        <div id="netbanking" class="tab-content">
+            <div class="card">
+                <h2>💳 Quick Actions</h2>
+                <div class="quick-actions">
+                    <div class="action-btn">
+                        <div class="icon">💸</div>
+                        <div class="title">Transfer Money</div>
+                    </div>
+                    <div class="action-btn">
+                        <div class="icon">📱</div>
+                        <div class="title">Mobile Recharge</div>
+                    </div>
+                    <div class="action-btn">
+                        <div class="icon">💡</div>
+                        <div class="title">Pay Bills</div>
+                    </div>
+                    <div class="action-btn">
+                        <div class="icon">📋</div>
+                        <div class="title">View Statements</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>📜 Recent Transactions</h2>
+                <div class="transaction-list">
+                    <div class="transaction-item">
+                        <div class="transaction-info">
+                            <div class="name">Salary Credit</div>
+                            <div class="date">Nov 15, 2025</div>
+                        </div>
+                        <div class="transaction-amount credit">+$5,200.00</div>
+                    </div>
+                    <div class="transaction-item">
+                        <div class="transaction-info">
+                            <div class="name">Grocery Store</div>
+                            <div class="date">Nov 14, 2025</div>
+                        </div>
+                        <div class="transaction-amount debit">-$142.50</div>
+                    </div>
+                    <div class="transaction-item">
+                        <div class="transaction-info">
+                            <div class="name">Electric Bill Payment</div>
+                            <div class="date">Nov 12, 2025</div>
+                        </div>
+                        <div class="transaction-amount debit">-$85.30</div>
+                    </div>
+                    <div class="transaction-item">
+                        <div class="transaction-info">
+                            <div class="name">ATM Withdrawal</div>
+                            <div class="date">Nov 10, 2025</div>
+                        </div>
+                        <div class="transaction-amount debit">-$200.00</div>
+                    </div>
+                    <div class="transaction-item">
+                        <div class="transaction-info">
+                            <div class="name">Investment Returns</div>
+                            <div class="date">Nov 8, 2025</div>
+                        </div>
+                        <div class="transaction-amount credit">+$1,450.00</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loan Application Tab -->
+        <div id="loans" class="tab-content">
+            <div class="card">
+                <h2>🏠 Apply for Loan</h2>
+                <form id="loanForm" onsubmit="event.preventDefault(); submitLoanApplication();">
+                    <div class="form-group">
+                        <label>Loan Type</label>
+                        <select id="loanType" required>
+                            <option value="">Select Loan Type</option>
+                            <option value="home">Home Loan</option>
+                            <option value="personal">Personal Loan</option>
+                            <option value="auto">Auto Loan</option>
+                            <option value="education">Education Loan</option>
+                            <option value="business">Business Loan</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Loan Amount ($)</label>
+                        <input type="number" id="loanAmount" placeholder="Enter loan amount" required min="1000" max="1000000">
+                    </div>
+                    <div class="form-group">
+                        <label>Loan Duration (Years)</label>
+                        <select id="loanDuration" required>
+                            <option value="">Select Duration</option>
+                            <option value="1">1 Year</option>
+                            <option value="2">2 Years</option>
+                            <option value="3">3 Years</option>
+                            <option value="5">5 Years</option>
+                            <option value="10">10 Years</option>
+                            <option value="15">15 Years</option>
+                            <option value="20">20 Years</option>
+                            <option value="30">30 Years</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Purpose of Loan</label>
+                        <textarea id="loanPurpose" rows="4" placeholder="Describe the purpose of your loan application" required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Monthly Income ($)</label>
+                        <input type="number" id="monthlyIncome" placeholder="Enter your monthly income" required min="0">
+                    </div>
+                    <button type="submit" class="submit-btn">Submit Application</button>
+                </form>
+
+                <div class="security-status" style="margin-top: 30px;">
+                    <div class="icon">✅</div>
+                    <div class="text">
+                        <div class="title">Pre-Qualified</div>
+                        <div class="description">Based on your account history, you are pre-qualified for loans up to $500,000</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Load customer data
+        async function loadCustomerData() {
+            try {
+                const response = await fetch('/api/customer-data');
+                const data = await response.json();
+                
+                document.getElementById('userName').textContent = data.name;
+                document.getElementById('customerId').textContent = `Customer ID: ${data.customerId}`;
+                document.getElementById('accountBalance').textContent = data.balance;
+                document.getElementById('accountType').textContent = data.accountType;
+                document.getElementById('lastLogin').textContent = data.lastLogin;
+                
+                document.getElementById('info-customer-id').textContent = data.customerId;
+                document.getElementById('info-name').textContent = data.name;
+                document.getElementById('info-account-type').textContent = data.accountType;
+            } catch (error) {
+                console.error('Error loading customer data:', error);
+            }
+        }
+
+        // Switch tabs
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        // Logout
+        async function logout() {
+            try {
+                await fetch('/logout', { method: 'POST' });
+                window.location.href = '/';
+            } catch (error) {
+                console.error('Logout error:', error);
+            }
+        }
+
+        // Submit loan application
+        function submitLoanApplication() {
+            const loanType = document.getElementById('loanType').value;
+            const loanAmount = document.getElementById('loanAmount').value;
+            const loanDuration = document.getElementById('loanDuration').value;
+            
+            alert(`✅ Loan Application Submitted!\n\nType: ${loanType.toUpperCase()}\nAmount: $${parseInt(loanAmount).toLocaleString()}\nDuration: ${loanDuration} years\n\nYour application is being processed. You will receive an update within 2-3 business days.`);
+            
+            document.getElementById('loanForm').reset();
+        }
+
+        // Load data on page load
+        loadCustomerData();
+    </script>
+</body>
+</html>

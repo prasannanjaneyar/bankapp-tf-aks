@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: banking-config
+  namespace: banking
+data:
+  NODE_ENV: "production"
+  PORT: "8080"
+  LOG_LEVEL: "info"

@@ -1,0 +1,79 @@
+# Infrastructure-Only Pipeline
+# Use this to deploy or update only the infrastructure
+
+trigger: none  # Manual trigger only
+
+pr: none
+
+parameters:
+- name: action
+  displayName: 'Terraform Action'
+  type: string
+  default: 'apply'
+  values:
+  - plan
+  - apply
+  - destroy
+
+variables:
+  azureSubscription: 'Azure-ServiceConnection'
+  tfBackendResourceGroup: 'rg-terraform-state'
+  tfBackendStorageAccount: 'sttfstate'
+  tfBackendContainerName: 'tfstate'
+  tfBackendKey: 'banking-aks.tfstate'
+  vmImageName: 'ubuntu-latest'
+
+stages:
+- stage: TerraformInfrastructure
+  displayName: 'Terraform ${{ parameters.action }}'
+  jobs:
+  - job: Terraform
+    displayName: 'Execute Terraform'
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: TerraformInstaller@0
+      displayName: 'Install Terraform'
+      inputs:
+        terraformVersion: 'latest'
+
+    - task: TerraformTaskV4@4
+      displayName: 'Terraform Init'
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+        backendServiceArm: '$(azureSubscription)'
+        backendAzureRmResourceGroupName: '$(tfBackendResourceGroup)'
+        backendAzureRmStorageAccountName: '$(tfBackendStorageAccount)'
+        backendAzureRmContainerName: '$(tfBackendContainerName)'
+        backendAzureRmKey: '$(tfBackendKey)'
+
+    - task: TerraformTaskV4@4
+      displayName: 'Terraform ${{ parameters.action }}'
+      inputs:
+        provider: 'azurerm'
+        command: '${{ parameters.action }}'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+        environmentServiceNameAzureRM: '$(azureSubscription)'
+        commandOptions: '${{ if ne(parameters.action, ''plan'') }}-auto-approve${{ end }}'
+
+    - task: TerraformTaskV4@4
+      displayName: 'Terraform Output'
+      condition: and(succeeded(), ne('${{ parameters.action }}', 'destroy'))
+      inputs:
+        provider: 'azurerm'
+        command: 'output'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+
+    - task: Bash@3
+      displayName: 'Display Outputs'
+      condition: and(succeeded(), ne('${{ parameters.action }}', 'destroy'))
+      inputs:
+        targetType: 'inline'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+        script: |
+          echo "============================================"
+          echo "Terraform Outputs"
+          echo "============================================"
+          terraform output

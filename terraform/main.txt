@@ -1,0 +1,404 @@
+terraform {
+  required_version = ">= 1.0"
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.80"
+    }
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~> 2.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {
+    key_vault {
+      purge_soft_delete_on_destroy = true
+    }
+    resource_group {
+      prevent_deletion_if_contains_resources = false
+    }
+  }
+}
+
+# Generate random suffix for unique names
+resource "random_string" "suffix" {
+  length  = 6
+  special = false
+  upper   = false
+}
+
+# Resource Group
+resource "azurerm_resource_group" "banking" {
+  name     = var.resource_group_name
+  location = var.location
+  tags     = var.tags
+}
+
+# Virtual Network
+resource "azurerm_virtual_network" "banking" {
+  name                = "${var.prefix}-vnet"
+  location            = azurerm_resource_group.banking.location
+  resource_group_name = azurerm_resource_group.banking.name
+  address_space       = ["10.0.0.0/16"]
+  tags                = var.tags
+
+  depends_on = [azurerm_resource_group.banking]
+}
+
+# AKS Subnet
+resource "azurerm_subnet" "aks" {
+  name                 = "${var.prefix}-aks-subnet"
+  resource_group_name  = azurerm_resource_group.banking.name
+  virtual_network_name = azurerm_virtual_network.banking.name
+  address_prefixes     = ["10.0.1.0/24"]
+
+  depends_on = [azurerm_virtual_network.banking]
+}
+
+# Application Gateway Subnet
+resource "azurerm_subnet" "appgw" {
+  name                 = "${var.prefix}-appgw-subnet"
+  resource_group_name  = azurerm_resource_group.banking.name
+  virtual_network_name = azurerm_virtual_network.banking.name
+  address_prefixes     = ["10.0.2.0/24"]
+
+  depends_on = [
+    azurerm_virtual_network.banking,
+    azurerm_subnet.aks  # Ensure sequential subnet creation
+  ]
+}
+
+# Log Analytics Workspace (SIEM)
+resource "azurerm_log_analytics_workspace" "banking" {
+  name                = "${var.prefix}-law"
+  location            = azurerm_resource_group.banking.location
+  resource_group_name = azurerm_resource_group.banking.name
+  sku                 = "PerGB2018"
+  retention_in_days   = 90
+  tags                = var.tags
+
+  depends_on = [azurerm_resource_group.banking]
+}
+
+# AKS Cluster
+resource "azurerm_kubernetes_cluster" "banking" {
+  name                = "${var.prefix}-aks"
+  location            = azurerm_resource_group.banking.location
+  resource_group_name = azurerm_resource_group.banking.name
+  dns_prefix          = "${var.prefix}-aks"
+  # kubernetes_version removed to use default/latest supported version
+
+  default_node_pool {
+    name                = "system"
+    node_count          = var.node_count
+    vm_size             = var.vm_size
+    vnet_subnet_id      = azurerm_subnet.aks.id
+    enable_auto_scaling = true
+    min_count           = 2
+    max_count           = 5
+    os_disk_size_gb     = 100
+    type                = "VirtualMachineScaleSets"
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  network_profile {
+    network_plugin    = "azure"
+    network_policy    = "azure"
+    load_balancer_sku = "standard"
+    service_cidr      = "10.1.0.0/16"
+    dns_service_ip    = "10.1.0.10"
+  }
+
+  oms_agent {
+    log_analytics_workspace_id = azurerm_log_analytics_workspace.banking.id
+  }
+
+  azure_policy_enabled = true
+
+  role_based_access_control_enabled = true
+
+  tags = var.tags
+
+  depends_on = [
+    azurerm_subnet.aks,
+    azurerm_log_analytics_workspace.banking
+  ]
+
+  lifecycle {
+    ignore_changes = [
+      default_node_pool[0].node_count
+    ]
+  }
+}
+
+# Container Registry
+resource "azurerm_container_registry" "banking" {
+  name                = "${var.prefix}acr${random_string.suffix.result}"
+  resource_group_name = azurerm_resource_group.banking.name
+  location            = azurerm_resource_group.banking.location
+  sku                 = "Premium"
+  admin_enabled       = true
+
+  network_rule_set {
+    default_action = "Allow"
+  }
+
+  tags = var.tags
+
+  depends_on = [azurerm_resource_group.banking]
+}
+
+# ACR Role Assignment for AKS
+resource "azurerm_role_assignment" "aks_acr" {
+  principal_id                     = azurerm_kubernetes_cluster.banking.kubelet_identity[0].object_id
+  role_definition_name             = "AcrPull"
+  scope                            = azurerm_container_registry.banking.id
+  skip_service_principal_aad_check = true
+
+  depends_on = [
+    azurerm_kubernetes_cluster.banking,
+    azurerm_container_registry.banking
+  ]
+}
+
+# Current Azure AD Client Config
+data "azurerm_client_config" "current" {}
+
+# Key Vault
+resource "azurerm_key_vault" "banking" {
+  name                       = "${var.prefix}-kv-${random_string.suffix.result}"
+  location                   = azurerm_resource_group.banking.location
+  resource_group_name        = azurerm_resource_group.banking.name
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  sku_name                   = "premium"
+  soft_delete_retention_days = 7
+  purge_protection_enabled   = false
+
+  network_acls {
+    bypass         = "AzureServices"
+    default_action = "Allow"
+  }
+
+  tags = var.tags
+
+  depends_on = [azurerm_resource_group.banking]
+}
+
+# Key Vault Access Policy for Current User
+resource "azurerm_key_vault_access_policy" "current_user" {
+  key_vault_id = azurerm_key_vault.banking.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = data.azurerm_client_config.current.object_id
+
+  secret_permissions = [
+    "Get", "List", "Set", "Delete", "Purge", "Recover"
+  ]
+
+  depends_on = [azurerm_key_vault.banking]
+}
+
+# Store secrets in Key Vault
+resource "azurerm_key_vault_secret" "customer_id" {
+  name         = "customer-id"
+  value        = "5439090"
+  key_vault_id = azurerm_key_vault.banking.id
+
+  depends_on = [azurerm_key_vault_access_policy.current_user]
+}
+
+resource "azurerm_key_vault_secret" "customer_password" {
+  name         = "customer-password"
+  value        = "Passw0rd!!"
+  key_vault_id = azurerm_key_vault.banking.id
+
+  depends_on = [azurerm_key_vault_access_policy.current_user]
+}
+
+# Public IP for Application Gateway
+resource "azurerm_public_ip" "appgw" {
+  name                = "${var.prefix}-appgw-pip"
+  location            = azurerm_resource_group.banking.location
+  resource_group_name = azurerm_resource_group.banking.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = var.tags
+
+  depends_on = [azurerm_resource_group.banking]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Application Gateway
+resource "azurerm_application_gateway" "banking" {
+  name                = "${var.prefix}-appgw"
+  location            = azurerm_resource_group.banking.location
+  resource_group_name = azurerm_resource_group.banking.name
+
+  sku {
+    name     = "WAF_v2"
+    tier     = "WAF_v2"
+    capacity = 2
+  }
+
+  gateway_ip_configuration {
+    name      = "gateway-ip-config"
+    subnet_id = azurerm_subnet.appgw.id
+  }
+
+  frontend_port {
+    name = "frontend-port-80"
+    port = 80
+  }
+
+  frontend_port {
+    name = "frontend-port-443"
+    port = 443
+  }
+
+  frontend_ip_configuration {
+    name                 = "frontend-ip-config"
+    public_ip_address_id = azurerm_public_ip.appgw.id
+  }
+
+  backend_address_pool {
+    name = "backend-pool"
+  }
+
+  backend_http_settings {
+    name                  = "backend-http-settings"
+    cookie_based_affinity = "Enabled"
+    port                  = 80
+    protocol              = "Http"
+    request_timeout       = 60
+    probe_name            = "health-probe"
+  }
+
+  http_listener {
+    name                           = "http-listener"
+    frontend_ip_configuration_name = "frontend-ip-config"
+    frontend_port_name             = "frontend-port-80"
+    protocol                       = "Http"
+  }
+
+  request_routing_rule {
+    name                       = "routing-rule"
+    rule_type                  = "Basic"
+    http_listener_name         = "http-listener"
+    backend_address_pool_name  = "backend-pool"
+    backend_http_settings_name = "backend-http-settings"
+    priority                   = 100
+  }
+
+  probe {
+    name                = "health-probe"
+    protocol            = "Http"
+    path                = "/health"
+    interval            = 30
+    timeout             = 30
+    unhealthy_threshold = 3
+    host                = "127.0.0.1"
+  }
+
+  waf_configuration {
+    enabled          = true
+    firewall_mode    = "Prevention"
+    rule_set_type    = "OWASP"
+    rule_set_version = "3.2"
+  }
+
+  ssl_policy {
+    policy_type = "Predefined"
+    policy_name = "AppGwSslPolicy20220101"
+  }
+
+  tags = var.tags
+
+  depends_on = [
+    azurerm_subnet.appgw,
+    azurerm_public_ip.appgw
+  ]
+
+  lifecycle {
+    ignore_changes = [
+      backend_address_pool
+    ]
+  }
+}
+
+# Diagnostic Settings for AKS
+resource "azurerm_monitor_diagnostic_setting" "aks" {
+  name                       = "${var.prefix}-aks-diag"
+  target_resource_id         = azurerm_kubernetes_cluster.banking.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.banking.id
+
+  enabled_log {
+    category = "kube-apiserver"
+  }
+
+  enabled_log {
+    category = "kube-controller-manager"
+  }
+
+  enabled_log {
+    category = "kube-scheduler"
+  }
+
+  enabled_log {
+    category = "kube-audit"
+  }
+
+  enabled_log {
+    category = "cluster-autoscaler"
+  }
+
+  metric {
+    category = "AllMetrics"
+    enabled  = true
+  }
+
+  depends_on = [
+    azurerm_kubernetes_cluster.banking,
+    azurerm_log_analytics_workspace.banking
+  ]
+}
+
+# Diagnostic Settings for Application Gateway
+resource "azurerm_monitor_diagnostic_setting" "appgw" {
+  name                       = "${var.prefix}-appgw-diag"
+  target_resource_id         = azurerm_application_gateway.banking.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.banking.id
+
+  enabled_log {
+    category = "ApplicationGatewayAccessLog"
+  }
+
+  enabled_log {
+    category = "ApplicationGatewayPerformanceLog"
+  }
+
+  enabled_log {
+    category = "ApplicationGatewayFirewallLog"
+  }
+
+  metric {
+    category = "AllMetrics"
+    enabled  = true
+  }
+
+  depends_on = [
+    azurerm_application_gateway.banking,
+    azurerm_log_analytics_workspace.banking
+  ]
+}
