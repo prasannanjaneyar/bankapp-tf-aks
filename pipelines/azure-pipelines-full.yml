@@ -18,7 +18,7 @@ pr:
 
 variables:
   # Azure Configuration
-  azureSubscription: 'Azure-ServiceConnection'
+  azureSubscription: 'Azure subscription 1'
   
   # Terraform Backend (Update these for your environment)
   tfBackendResourceGroup: 'tfstate-rg'
