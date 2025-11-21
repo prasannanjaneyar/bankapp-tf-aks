@@ -131,7 +131,7 @@ stages:
               provider: 'azurerm'
               command: 'output'
               workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
-              outputTo: 'json'
+              environmentServiceNameAzureRM: 'tf-svc'
 
           - task: AzureCLI@2
             displayName: 'Save Terraform Outputs'
@@ -139,7 +139,6 @@ stages:
               azureSubscription: '$(azureSubscription)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
-              workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
               inlineScript: |
                 echo "Extracting Terraform outputs..."
                 
@@ -166,6 +165,7 @@ stages:
                 echo "AKS Cluster: $AKS_NAME"
                 echo "ACR: $ACR_LOGIN_SERVER"
                 echo "Application Gateway IP: $APP_GW_IP"
+              workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
 
           - task: Bash@3
             displayName: 'Wait for AKS to be Ready'
@@ -190,15 +190,10 @@ stages:
     pool:
       vmImage: $(vmImageName)
     steps:
-    - task: AzureCLI@2
-      displayName: 'Login to ACR'
+    - task: Docker@2
       inputs:
-        azureSubscription: '$(azureSubscription)'
-        scriptType: 'bash'
-        scriptLocation: 'inlineScript'
-        inlineScript: |
-          echo "Logging into ACR: $(acrName)"
-          az acr login --name $(acrName)
+        containerRegistry: 'docker-svc'
+        command: 'login'
 
     - task: Docker@2
       displayName: 'Build Docker Image'
