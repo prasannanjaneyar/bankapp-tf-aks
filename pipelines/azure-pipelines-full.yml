@@ -190,15 +190,10 @@ stages:
     pool:
       vmImage: $(vmImageName)
     steps:
-    - task: AzureCLI@2
-      displayName: 'Login to ACR'
+    - task: Docker@2
       inputs:
-        azureSubscription: '$(azureSubscription)'
-        scriptType: 'bash'
-        scriptLocation: 'inlineScript'
-        inlineScript: |
-          echo "Logging into ACR: $(acrName)"
-          az acr login --name $(acrName)
+        containerRegistry: 'docker-svc'
+        command: 'login'
 
     - task: Docker@2
       displayName: 'Build Docker Image'
