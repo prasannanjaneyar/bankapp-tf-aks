@@ -21,10 +21,13 @@ variables:
   azureSubscription: 'tf-svc'
   
   # Terraform Backend (Update these for your environment)
-  tfBackendResourceGroup: 'tfstate-rg'
-  tfBackendStorageAccount: 'tfstatebackendstore6789'  # Must be globally unique
+  tfBackendResourceGroup: 'rg-terraform-state'
+  tfBackendStorageAccount: 'sttfstate'  # Must be globally unique
   tfBackendContainerName: 'tfstate'
   tfBackendKey: 'banking-aks.tfstate'
+  
+  # Resource Configuration
+  resourceGroupName: 'rg-banking-aks-prod'
   
   # Application Configuration
   imageName: 'banking-app'
@@ -34,6 +37,9 @@ variables:
   vmImageName: 'ubuntu-latest'
 
 stages:
+#==============================================================================
+# STAGE 1: VALIDATE TERRAFORM
+#==============================================================================
 - stage: Validate
   displayName: 'Validate and Plan'
   jobs:
@@ -82,6 +88,9 @@ stages:
         artifact: 'terraform-plan'
         publishLocation: 'pipeline'
 
+#==============================================================================
+# STAGE 2: DEPLOY INFRASTRUCTURE
+#==============================================================================
 - stage: DeployInfrastructure
   displayName: 'Deploy Infrastructure'
   dependsOn: Validate
@@ -117,7 +126,6 @@ stages:
 
           - task: TerraformTaskV4@4
             displayName: 'Terraform Apply'
-            name: TerraformApply
             inputs:
               provider: 'azurerm'
               command: 'apply'
@@ -131,41 +139,7 @@ stages:
               provider: 'azurerm'
               command: 'output'
               workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
-              environmentServiceNameAzureRM: 'tf-svc'
-
-          - task: AzureCLI@2
-            displayName: 'Save Terraform Outputs'
-            inputs:
-              azureSubscription: '$(azureSubscription)'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                echo "Extracting Terraform outputs..."
-                
-                # Get outputs
-                RESOURCE_GROUP=$(terraform output -raw resource_group_name)
-                AKS_NAME=$(terraform output -raw aks_cluster_name)
-                ACR_NAME=$(terraform output -raw acr_name)
-                ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server)
-                KEY_VAULT_NAME=$(terraform output -raw key_vault_name)
-                KEY_VAULT_URI=$(terraform output -raw key_vault_uri)
-                APP_GW_IP=$(terraform output -raw application_gateway_public_ip)
-                
-                # Set pipeline variables
-                echo "##vso[task.setvariable variable=resourceGroup;isOutput=true]$RESOURCE_GROUP"
-                echo "##vso[task.setvariable variable=aksName;isOutput=true]$AKS_NAME"
-                echo "##vso[task.setvariable variable=acrName;isOutput=true]$ACR_NAME"
-                echo "##vso[task.setvariable variable=acrLoginServer;isOutput=true]$ACR_LOGIN_SERVER"
-                echo "##vso[task.setvariable variable=keyVaultName;isOutput=true]$KEY_VAULT_NAME"
-                echo "##vso[task.setvariable variable=keyVaultUri;isOutput=true]$KEY_VAULT_URI"
-                echo "##vso[task.setvariable variable=appGatewayIp;isOutput=true]$APP_GW_IP"
-                
-                echo "Infrastructure deployed successfully!"
-                echo "Resource Group: $RESOURCE_GROUP"
-                echo "AKS Cluster: $AKS_NAME"
-                echo "ACR: $ACR_LOGIN_SERVER"
-                echo "Application Gateway IP: $APP_GW_IP"
-              workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+              outputTo: 'json'
 
           - task: Bash@3
             displayName: 'Wait for AKS to be Ready'
@@ -190,43 +164,50 @@ stages:
       vmImage: $(vmImageName)
     steps:
     - task: AzureCLI@2
-      displayName: 'Get ACR Details and Build Image'
+      displayName: 'Build Image using ACR Build Task'
       inputs:
         azureSubscription: '$(azureSubscription)'
         scriptType: 'bash'
         scriptLocation: 'inlineScript'
         inlineScript: |
-          echo "Getting ACR information..."
+          set -e
           
-          # Get ACR details
-          ACR_NAME=$(az acr list --resource-group $(resourceGroupName) --query "[0].name" -o tsv)
-          ACR_LOGIN_SERVER=$(az acr list --resource-group $(resourceGroupName) --query "[0].loginServer" -o tsv)
+          RESOURCE_GROUP="rg-banking-aks-prod"
+          IMAGE_NAME="banking-app"
+          BUILD_NUMBER="$(Build.BuildNumber)"
+          SOURCE_DIR="$(Build.SourcesDirectory)"
+          
+          echo "Getting ACR information..."
+          echo "Resource Group: $RESOURCE_GROUP"
+          
+          ACR_NAME=$(az acr list --resource-group $RESOURCE_GROUP --query "[0].name" -o tsv)
+          
+          if [ -z "$ACR_NAME" ]; then
+            echo "##[error]No ACR found in resource group $RESOURCE_GROUP"
+            echo "Listing all resources in the group:"
+            az resource list --resource-group $RESOURCE_GROUP --output table
+            exit 1
+          fi
           
           echo "ACR Name: $ACR_NAME"
-          echo "ACR Login Server: $ACR_LOGIN_SERVER"
+          echo "Building image directly in ACR..."
           
-          # Login to ACR
-          echo "Logging into ACR..."
-          az acr login --name $ACR_NAME
+          # Build directly in ACR - this avoids local Docker issues
+          az acr build \
+            --registry $ACR_NAME \
+            --image ${IMAGE_NAME}:${BUILD_NUMBER} \
+            --image ${IMAGE_NAME}:latest \
+            --file Dockerfile \
+            --platform linux \
+            ${SOURCE_DIR}/app
           
-          # Build image
-          echo "Building Docker image..."
-          cd $(Build.SourcesDirectory)/app
-          docker build -t $(imageName):$(Build.BuildNumber) .
+          ACR_LOGIN_SERVER="${ACR_NAME}.azurecr.io"
           
-          # Tag images
-          echo "Tagging images..."
-          docker tag $(imageName):$(Build.BuildNumber) $(imageName):latest
-          docker tag $(imageName):$(Build.BuildNumber) $ACR_LOGIN_SERVER/$(imageName):$(Build.BuildNumber)
-          docker tag $(imageName):$(Build.BuildNumber) $ACR_LOGIN_SERVER/$(imageName):latest
-          
-          # Push to ACR
-          echo "Pushing to ACR..."
-          docker push $ACR_LOGIN_SERVER/$(imageName):$(Build.BuildNumber)
-          docker push $ACR_LOGIN_SERVER/$(imageName):latest
-          
-          echo "✓ Image pushed successfully!"
-          echo "  Image: $ACR_LOGIN_SERVER/$(imageName):$(Build.BuildNumber)"
+          echo ""
+          echo "✓ Image built and pushed successfully!"
+          echo "  Registry: $ACR_LOGIN_SERVER"
+          echo "  Image: ${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${BUILD_NUMBER}"
+          echo "  Tags: ${BUILD_NUMBER}, latest"
 
     - task: PublishPipelineArtifact@1
       displayName: 'Publish K8s Manifests'
@@ -267,12 +248,19 @@ stages:
               inlineScript: |
                 set -e
                 
+                RESOURCE_GROUP="rg-banking-aks-prod"
+                IMAGE_NAME="banking-app"
+                BUILD_NUMBER="$(Build.BuildNumber)"
+                K8S_NAMESPACE="banking"
+                WORKSPACE_DIR="$(Pipeline.Workspace)"
+                
                 echo "Getting resource information..."
+                echo "Resource Group: $RESOURCE_GROUP"
                 
                 # Get resource details
-                ACR_LOGIN_SERVER=$(az acr list --resource-group $(resourceGroupName) --query "[0].loginServer" -o tsv)
-                AKS_NAME=$(az aks list --resource-group $(resourceGroupName) --query "[0].name" -o tsv)
-                KV_URI=$(az keyvault list --resource-group $(resourceGroupName) --query "[0].properties.vaultUri" -o tsv)
+                ACR_LOGIN_SERVER=$(az acr list --resource-group $RESOURCE_GROUP --query "[0].loginServer" -o tsv)
+                AKS_NAME=$(az aks list --resource-group $RESOURCE_GROUP --query "[0].name" -o tsv)
+                KV_URI=$(az keyvault list --resource-group $RESOURCE_GROUP --query "[0].properties.vaultUri" -o tsv)
                 
                 echo "ACR Server: $ACR_LOGIN_SERVER"
                 echo "AKS Cluster: $AKS_NAME"
@@ -281,7 +269,7 @@ stages:
                 # Get AKS credentials
                 echo "Getting AKS credentials..."
                 az aks get-credentials \
-                  --resource-group $(resourceGroupName) \
+                  --resource-group $RESOURCE_GROUP \
                   --name $AKS_NAME \
                   --overwrite-existing
                 
@@ -290,18 +278,18 @@ stages:
                 kubectl get nodes
                 
                 # Update manifests
-                cd $(Pipeline.Workspace)/k8s-manifests
+                cd ${WORKSPACE_DIR}/k8s-manifests
                 
                 echo "Updating manifests with actual values..."
                 
                 # Update deployment with ACR and build number
-                sed -i "s|image:.*|image: $ACR_LOGIN_SERVER/$(imageName):$(Build.BuildNumber)|g" 03-deployment.yaml
+                sed -i "s|image:.*|image: ${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${BUILD_NUMBER}|g" 03-deployment.yaml
                 
                 # Update secret with Key Vault URI
                 sed -i "s|__KEY_VAULT_URL__|$KV_URI|g" 01-secret.yaml
                 
                 echo "Updated manifests:"
-                echo "Image: $ACR_LOGIN_SERVER/$(imageName):$(Build.BuildNumber)"
+                echo "Image: ${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${BUILD_NUMBER}"
                 echo "Key Vault: $KV_URI"
                 
                 # Create namespace
@@ -310,22 +298,22 @@ stages:
                 
                 # Deploy secrets and config
                 echo "Deploying secrets and config..."
-                kubectl apply -f 01-secret.yaml -n $(k8sNamespace)
-                kubectl apply -f 02-configmap.yaml -n $(k8sNamespace)
+                kubectl apply -f 01-secret.yaml -n $K8S_NAMESPACE
+                kubectl apply -f 02-configmap.yaml -n $K8S_NAMESPACE
                 
                 # Deploy application
                 echo "Deploying application..."
-                kubectl apply -f 03-deployment.yaml -n $(k8sNamespace)
-                kubectl apply -f 04-service.yaml -n $(k8sNamespace)
-                kubectl apply -f 05-hpa.yaml -n $(k8sNamespace)
-                kubectl apply -f 06-network-policy.yaml -n $(k8sNamespace)
+                kubectl apply -f 03-deployment.yaml -n $K8S_NAMESPACE
+                kubectl apply -f 04-service.yaml -n $K8S_NAMESPACE
+                kubectl apply -f 05-hpa.yaml -n $K8S_NAMESPACE
+                kubectl apply -f 06-network-policy.yaml -n $K8S_NAMESPACE
                 
                 # Wait for deployment
                 echo "Waiting for deployment to complete..."
-                kubectl rollout status deployment/banking-app -n $(k8sNamespace) --timeout=10m
+                kubectl rollout status deployment/banking-app -n $K8S_NAMESPACE --timeout=10m
                 
                 echo "Checking pod status..."
-                kubectl get pods -n $(k8sNamespace)
+                kubectl get pods -n $K8S_NAMESPACE
 
           - task: AzureCLI@2
             displayName: 'Configure Application Gateway'
@@ -334,10 +322,13 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
+                RESOURCE_GROUP="rg-banking-aks-prod"
+                K8S_NAMESPACE="banking"
+                
                 echo "Waiting for LoadBalancer IP assignment..."
                 
                 for i in {1..30}; do
-                  INTERNAL_LB_IP=$(kubectl get svc banking-app-service -n $(k8sNamespace) -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+                  INTERNAL_LB_IP=$(kubectl get svc banking-app-service -n $K8S_NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
                   
                   if [ -n "$INTERNAL_LB_IP" ]; then
                     echo "LoadBalancer IP assigned: $INTERNAL_LB_IP"
@@ -355,11 +346,11 @@ stages:
                 
                 echo "Updating Application Gateway backend pool..."
                 
-                APP_GW_NAME=$(az network application-gateway list --resource-group $(resourceGroupName) --query "[0].name" -o tsv)
+                APP_GW_NAME=$(az network application-gateway list --resource-group $RESOURCE_GROUP --query "[0].name" -o tsv)
                 
                 az network application-gateway address-pool update \
                   --gateway-name $APP_GW_NAME \
-                  --resource-group $(resourceGroupName) \
+                  --resource-group $RESOURCE_GROUP \
                   --name backend-pool \
                   --servers $INTERNAL_LB_IP
                 
@@ -372,14 +363,19 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
+                RESOURCE_GROUP="rg-banking-aks-prod"
+                IMAGE_NAME="banking-app"
+                BUILD_NUMBER="$(Build.BuildNumber)"
+                K8S_NAMESPACE="banking"
+                
                 # Get Application Gateway IP
                 APP_GW_IP=$(az network public-ip show \
-                  --resource-group $(resourceGroupName) \
+                  --resource-group $RESOURCE_GROUP \
                   --name bankaks-appgw-pip \
                   --query ipAddress -o tsv)
                 
-                ACR_LOGIN_SERVER=$(az acr list --resource-group $(resourceGroupName) --query "[0].loginServer" -o tsv)
-                AKS_NAME=$(az aks list --resource-group $(resourceGroupName) --query "[0].name" -o tsv)
+                ACR_LOGIN_SERVER=$(az acr list --resource-group $RESOURCE_GROUP --query "[0].loginServer" -o tsv)
+                AKS_NAME=$(az aks list --resource-group $RESOURCE_GROUP --query "[0].name" -o tsv)
                 
                 echo "============================================"
                 echo "✅ DEPLOYMENT SUCCESSFUL!"
@@ -393,15 +389,15 @@ stages:
                 echo "   Password: Passw0rd!!"
                 echo ""
                 echo "📊 Deployment Details:"
-                echo "   Resource Group: $(resourceGroupName)"
+                echo "   Resource Group: $RESOURCE_GROUP"
                 echo "   AKS Cluster: $AKS_NAME"
-                echo "   Namespace: $(k8sNamespace)"
-                echo "   Build Number: $(Build.BuildNumber)"
-                echo "   Image: $ACR_LOGIN_SERVER/$(imageName):$(Build.BuildNumber)"
+                echo "   Namespace: $K8S_NAMESPACE"
+                echo "   Build Number: $BUILD_NUMBER"
+                echo "   Image: ${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${BUILD_NUMBER}"
                 echo ""
                 echo "🔍 Verify Deployment:"
-                echo "   kubectl get all -n $(k8sNamespace)"
-                echo "   kubectl logs -f deployment/banking-app -n $(k8sNamespace)"
+                echo "   kubectl get all -n $K8S_NAMESPACE"
+                echo "   kubectl logs -f deployment/banking-app -n $K8S_NAMESPACE"
                 echo ""
                 echo "============================================"
 
@@ -410,11 +406,13 @@ stages:
             inputs:
               targetType: 'inline'
               script: |
+                K8S_NAMESPACE="banking"
+                
                 echo "Running health checks..."
                 
                 # Check pods
-                READY_PODS=$(kubectl get pods -n $(k8sNamespace) -l app=banking-app -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | wc -w)
-                DESIRED_PODS=$(kubectl get deployment banking-app -n $(k8sNamespace) -o jsonpath='{.spec.replicas}')
+                READY_PODS=$(kubectl get pods -n $K8S_NAMESPACE -l app=banking-app -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | wc -w)
+                DESIRED_PODS=$(kubectl get deployment banking-app -n $K8S_NAMESPACE -o jsonpath='{.spec.replicas}')
                 
                 echo "Pods Status: $READY_PODS/$DESIRED_PODS ready"
                 
@@ -427,9 +425,9 @@ stages:
                 # Display service info
                 echo ""
                 echo "Service Information:"
-                kubectl get svc banking-app-service -n $(k8sNamespace)
+                kubectl get svc banking-app-service -n $K8S_NAMESPACE
                 
                 # Display HPA info
                 echo ""
                 echo "HPA Status:"
-                kubectl get hpa -n $(k8sNamespace)
+                kubectl get hpa -n $K8S_NAMESPACE
